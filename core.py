@@ -18,13 +18,13 @@ from pathlib import Path
 
 PROFILE = "ga5-incident-agent/v2"
 MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
-DB_PATH = os.getenv("DB_PATH", str(Path(__file__).with_name("incidents.db")))
+DB_PATH = os.getenv("DB_PATH", str(Path(file).with_name("incidents.db")))
 PLAN_DEADLINE = 15.0  # seconds; the grader allows 18 per request
 
 
 class Reject(Exception):
-    def __init__(self, status, code):
-        super().__init__(code)
+    def init(self, status, code):
+        super().init(code)
         self.status, self.code = status, code
 
 
@@ -126,7 +126,6 @@ def save(run_id, req_hash, state, receipt=None):
             c.execute("ROLLBACK")
             raise
 
-
 # ---------------------------------------------------------------- validation
 def validate_create(b):
     if b.get("profile") != PROFILE:
@@ -209,8 +208,6 @@ def check_value(schema, v):
     if isinstance(schema, dict) and "enum" in schema and v not in schema["enum"]:
         raise ValueError("enum")
     return v
-
-
 def check_args(schema, args):
     if not isinstance(args, dict):
         raise ValueError("arguments must be an object")
@@ -293,7 +290,8 @@ def validate_plan(plan, body):
             or eff.get("toolName") not in catalog:
         raise ValueError("effect.toolName must be one of policy.effectTools")
     eargs = check_args(catalog[eff["toolName"]].get("inputSchema") or {}, eff.get("arguments") or {})
-    eev = ev_list(eff.get("evidence") or diag_ev, 1, 4, "effect evidence")
+    eev = [e for e in (eff.get("evidence") or []) if isinstance(e, str) and e in ids]
+    eev = list(dict.fromkeys(eev))[:4] or diag_ev[:2]  # lenient: fall back to the diagnosis evidence
     out = {"rootCause": plan["rootCause"], "evidence": diag_ev, "diagnostics": diags,
            "effect": {"toolName": eff["toolName"], "arguments": eargs, "evidence": eev}}
     blob = canon(out)
@@ -333,9 +331,10 @@ def real_planner(body):
     hint, last = "", "no answer"
     for attempt in range(2):
         left = PLAN_DEADLINE - (time.monotonic() - start)
-        if left < 4:
+        if left < 5:
             break
-        kw = dict(model=MODEL, response_format={"type": "json_object"}, timeout=min(left - 1, 12 if attempt == 0 else 9),
+        # first try may use almost the whole budget; a retry only happens after a quick wrong answer
+        kw = dict(model=MODEL, response_format={"type": "json_object"}, timeout=left - 0.5,
                   messages=[{"role": "system", "content": PLAN_SYSTEM}, {"role": "user", "content": user + hint}])
         if MODEL.startswith(("gpt-5", "o1", "o3", "o4")):
             kw["reasoning_effort"] = "low"
@@ -346,10 +345,13 @@ def real_planner(body):
         try:
             r = client.chat.completions.create(**kw)
             plan = validate_plan(json.loads(r.choices[0].message.content), body)
+            print("PLAN OK in %.1fs model=%s" % (time.monotonic() - start, MODEL), flush=True)
             return plan, MODEL, t0, time.time_ns()
         except Exception as exc:  # never print the body: it holds secrets
-            last = type(exc).__name__ + ": " + str(exc)[:150]
-            print("PLAN ATTEMPT FAILED:", last, flush=True)
+            last = type(exc).name + ": " + str(exc)[:150]
+            print("PLAN ATTEMPT FAILED after %.1fs:" % (time.monotonic() - start), last, flush=True)
+            if type(exc).name in ("APITimeoutError", "APIConnectionError", "AuthenticationError", "NotFoundError"):
+                break  # a second try cannot finish in time (or cannot ever work)
             hint = "\n\nYour previous answer was invalid (" + str(exc)[:150] + "). Fix it."
     raise Reject(502, "PLANNER_UNAVAILABLE")
 
