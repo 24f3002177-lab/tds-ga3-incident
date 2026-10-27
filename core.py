@@ -18,14 +18,18 @@ from pathlib import Path
 
 PROFILE = "ga5-incident-agent/v2"
 MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
-DB_PATH = os.getenv("DB_PATH", str(Path(file).with_name("incidents.db")))
+DB_PATH = os.getenv("DB_PATH","incidents.db")
 PLAN_DEADLINE = 15.0  # seconds; the grader allows 18 per request
 
 
 class Reject(Exception):
-    def init(self, status, code):
-        super().init(code)
-        self.status, self.code = status, code
+    @property
+    def status(self):
+        return self.args[0]
+
+    @property
+    def code(self):
+        return self.args[1]
 
 
 # ---------------------------------------------------------------- helpers
@@ -348,9 +352,10 @@ def real_planner(body):
             print("PLAN OK in %.1fs model=%s" % (time.monotonic() - start, MODEL), flush=True)
             return plan, MODEL, t0, time.time_ns()
         except Exception as exc:  # never print the body: it holds secrets
-            last = type(exc).name + ": " + str(exc)[:150]
+            last = repr(exc)[:150]
+            kind = repr(exc)
             print("PLAN ATTEMPT FAILED after %.1fs:" % (time.monotonic() - start), last, flush=True)
-            if type(exc).name in ("APITimeoutError", "APIConnectionError", "AuthenticationError", "NotFoundError"):
+            if any(w in kind for w in ("APITimeoutError", "APIConnectionError", "AuthenticationError", "NotFoundError")):
                 break  # a second try cannot finish in time (or cannot ever work)
             hint = "\n\nYour previous answer was invalid (" + str(exc)[:150] + "). Fix it."
     raise Reject(502, "PLANNER_UNAVAILABLE")
