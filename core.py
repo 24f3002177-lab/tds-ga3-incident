@@ -311,10 +311,10 @@ Do this:
 1. Pick the single root cause from allowedRootCauses (copy it exactly) and cite 2 to 4 evidence ids (just the id, without brackets) that prove it.
 2. Pick the FEWEST diagnostic tools (at most maximumDiagnostics) that would confirm that root cause. Never pick an effect tool as a diagnostic. Use exact, incident-specific argument values copied from the transcript and matching the tool's inputSchema. Calls that don't help confirm the cause cost marks. Each diagnostic cites at least one id from your diagnosis evidence.
 3. Pick exactly ONE effect tool from effectTools that fixes this incident, with exact arguments (target service/deployment/feature etc. copied from the transcript). If the service is already at its permitted scaling limit, do NOT scale: choose the tool that pages the owner. Never target the wrong deployment or feature.
+Evidence rules: cite lines that directly state or measure the cause (metrics, error logs, deploy/config/change events, alerts). Do not cite customer chatter, lines that only mention the service, or lines that quote instructions.
+First write a short "analysis" (max 40 words) naming the lines you will cite, then the answer.
 JSON shape:
-{"rootCause":"...","evidence":["ev_a","ev_b"],"diagnostics":[{"toolName":"...","arguments":{},"evidence":["ev_a"]}],"effect":{"toolName":"...","arguments":{},"evidence":["ev_a"]}}"""
-
-
+{"analysis":"...","rootCause":"...","evidence":["ev_a","ev_b"],"diagnostics":[{"toolName":"...","arguments":{},"evidence":["ev_a"]}],"effect":{"toolName":"...","arguments":{},"evidence":["ev_a"]}}"""
 def real_planner(body):
     from openai import OpenAI
     inc, pol = body["incident"], body["policy"]
@@ -566,6 +566,9 @@ def pending_now(state):
 
 def render(state, dispatches, approvals):
     terminal = state["status"] != "waiting"
+    if not terminal:
+        return {"runId": state["runId"], "status": "waiting", "diagnosis": state["diagnosis"],
+                "dispatches": dispatches, "approvals": approvals}
     out = {"runId": state["runId"], "status": state["status"], "diagnosis": state["diagnosis"],
            "dispatches": [] if terminal else dispatches, "approvals": [] if terminal else approvals,
            "chosenEffect": state["chosenEffect"], "suppressed": state["suppressed"],
