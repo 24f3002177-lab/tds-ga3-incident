@@ -415,7 +415,7 @@ DEBUG = []
 
 def debug_note(run_id, kind, payload):
     DEBUG.append({"runId": run_id, "kind": kind, "data": payload})
-    del DEBUG[:-30]
+    del DEBUG[:-150]
 
 
 def debug_dump():
@@ -633,9 +633,6 @@ def pending_now(state):
 
 def render(state, dispatches, approvals):
     terminal = state["status"] != "waiting"
-    if not terminal:
-        return {"runId": state["runId"], "status": "waiting", "diagnosis": state["diagnosis"],
-                "dispatches": dispatches, "approvals": approvals}
     out = {"runId": state["runId"], "status": state["status"], "diagnosis": state["diagnosis"],
            "dispatches": [] if terminal else dispatches, "approvals": [] if terminal else approvals,
            "chosenEffect": state["chosenEffect"], "suppressed": state["suppressed"],
@@ -679,7 +676,9 @@ def handle_create(body, traceparent=None, tracestate=None):
                  "chosenEffect": None, "suppressed": []}
         new = [make_dispatch(state, new_action(state, "diagnostic", d)) for d in plan["diagnostics"]]
         save(run_id, req_hash, state)
-        return render(state, new, [])
+        out = render(state, new, [])
+        debug_note(run_id, "reply", out)
+        return out
 
 
 def handle_receipt(run_id, body):
