@@ -259,18 +259,29 @@ def validate_plan(plan, body):
     if plan.get("rootCause") not in inc["allowedRootCauses"]:
         raise ValueError("rootCause must be exactly one of allowedRootCauses")
 
-    def ev_list(x, lo, hi, what):
-        if not isinstance(x, list):
-            raise ValueError(what + " must be a list")
+    def clean_ids(x):
+        if isinstance(x, str):
+            x = re.findall(r"[^\s,\[\]\"']+", x)
         out = []
-        for e in x:
-            if isinstance(e, str) and e in ids and e not in out:
-                out.append(e)
-        if len(out) < lo:
-            raise ValueError(what + " needs real evidence ids from the transcript")
-        return out[:hi]
+        for e in x if isinstance(x, list) else []:
+            if isinstance(e, str):
+                e = e.strip().strip("[]").strip()
+                if e in ids and e not in out:
+                    out.append(e)
+        return out
 
-    diag_ev = ev_list(plan.get("evidence"), 2, 4, "evidence")
+    diag_ev = clean_ids(plan.get("evidence"))[:4]
+    if len(diag_ev) < 2:
+        pool = []
+        for d in plan.get("diagnostics") or []:
+            pool += clean_ids(d.get("evidence")) if isinstance(d, dict) else []
+        if isinstance(plan.get("effect"), dict):
+            pool += clean_ids(plan["effect"].get("evidence"))
+        for e in pool:
+            if e not in diag_ev and len(diag_ev) < 4:
+                diag_ev.append(e)
+    if len(diag_ev) < 2:
+        raise ValueError("evidence needs real evidence ids from the transcript")
     catalog = {t["name"]: t for t in body["toolCatalog"]}
     max_d = min(3, pol["maximumDiagnostics"])
     diags, seen = [], set()
@@ -294,8 +305,7 @@ def validate_plan(plan, body):
             or eff.get("toolName") not in catalog:
         raise ValueError("effect.toolName must be one of policy.effectTools")
     eargs = check_args(catalog[eff["toolName"]].get("inputSchema") or {}, eff.get("arguments") or {})
-    eev = [e for e in (eff.get("evidence") or []) if isinstance(e, str) and e in ids]
-    eev = list(dict.fromkeys(eev))[:4] or diag_ev[:2]  # lenient: fall back to the diagnosis evidence
+    eev = clean_ids(eff.get("evidence"))[:4] or diag_ev[:2]
     out = {"rootCause": plan["rootCause"], "evidence": diag_ev, "diagnostics": diags,
            "effect": {"toolName": eff["toolName"], "arguments": eargs, "evidence": eev}}
     blob = canon(out)
@@ -359,6 +369,17 @@ def real_planner(body):
                 break  # a second try cannot finish in time (or cannot ever work)
             hint = "\n\nYour previous answer was invalid (" + str(exc)[:150] + "). Fix it."
     raise Reject(502, "PLANNER_UNAVAILABLE")
+
+DEBUG = []
+
+
+def debug_note(run_id, kind, payload):
+    DEBUG.append({"runId": run_id, "kind": kind, "data": payload})
+    del DEBUG[:-30]
+
+
+def debug_dump():
+    return DEBUG
 
 
 PLANNER = real_planner  # tests replace this
@@ -590,7 +611,11 @@ def handle_create(body, traceparent=None, tracestate=None):
                 raise Reject(409, "RUN_CONFLICT")
             return render(state, *pending_now(state))  # replay: stored state, no model, no action
         created = time.time_ns()
+        safe = {k: v for k, v in body.items() if k != "sensitive"}
+        safe["policy"] = {k: v for k, v in body["policy"].items() if k != "doNotExport"}
+        debug_note(run_id, "request", safe)
         plan, model, t0, t1 = PLANNER(body)
+        debug_note(run_id, "plan", plan)
         inc = parse_traceparent(traceparent) or parse_traceparent(body.get("traceparent"))
         ts = tracestate if is_str(tracestate) else body.get("tracestate")
         trace = {"traceId": inc[0] if inc else nz_hex(16), "parentSpan": inc[1] if inc else None,
