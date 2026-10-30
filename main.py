@@ -71,6 +71,16 @@ async def receipts(run_id: str, request: Request):
 async def debug_incidents():
     return JSONResponse(content=core.debug_dump())
 
+@app.middleware("http")
+async def log_everything(request: Request, call_next):
+    response = await call_next(request)
+    if not request.url.path.startswith("/dbg"):
+        keep = ("traceparent", "tracestate", "content-type", "user-agent", "accept")
+        core.debug_note("-", "http", {"method": request.method, "path": request.url.path,
+                                      "status": response.status_code,
+                                      "headers": {k: v for k, v in request.headers.items() if k.lower() in keep}})
+    return response
+
 
 
 @app.get("/v2/incidents/{run_id}")
