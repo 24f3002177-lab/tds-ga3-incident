@@ -67,6 +67,12 @@ async def receipts(run_id: str, request: Request):
     return await run(core.handle_receipt, run_id, body)
 
 
+@app.get("/dbg-7f3k9q/incidents")
+async def debug_incidents():
+    return JSONResponse(content=core.debug_dump())
+
+
+
 @app.get("/v2/incidents/{run_id}")
 async def get_run(run_id: str):
     return await run(core.handle_get, run_id)
